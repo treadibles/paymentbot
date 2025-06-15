@@ -160,9 +160,15 @@ def get_confirmations(txid: str) -> int:
 
 # — HANDLERS —
 async def start_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Welcome! To start, send: /pay @your_username <amount_in_usd>"
-    )
+            # Plain-text reply without MarkdownV2
+        reply_text = (
+            f"💰 Send {amount_btc:.8f} BTC to {address}
+"
+            f"(Bitstamp rate: ${price_usd:.2f}/BTC)
+"
+            "When sent, reply with your transaction ID."
+        )
+        await update.message.reply_text(reply_text)
 
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logging.info("▶️ pay_command called; ctx.args=%r", ctx.args)
