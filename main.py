@@ -101,7 +101,7 @@ ADDRESSES = [
     "bc1qpl2qkgy3p89r38s0zc730zjfpkf6ge9tdjkfc8",
     "bc1qye6pe52lpsmk66c30lu7wwj3l79ma73745ukfq",
     "bc1q7y4q5c5370jdje968adsrlhp8luhjn2xdhn390",
-    "bc1qczz3gaz507zn82qpq2eww9rvgnwad3n8fxn5mf",
+    "bc1qczz3gaz507zn82qp2eww9rvgnwad3n8fxn5mf",
     "bc1q6avf0m3tukwjz97vletm88u445vv3789uthnmc",
     "bc1qzm83n6lcxq5tajtzycgpag3vcvea23va85xmyf",
     "bc1q0alpuyn7ea8fyyexp2d2m2d5gfew9m7rmnm3ta",
@@ -117,8 +117,7 @@ ADDRESSES = [
     "bc1qcx6awk4ger727eyh907jpdxdpxz6yxjkwdrrf6",
     "bc1quvg4fgngytqg98xc4j2hhknsfhce0xv2d6ecjf",
     "bc1qky2nra86un56mss0s9qxt0ju3frk0udpmf443u",
-    "bc1q8xr6agflnw9gkr38agzf78nzh4pr3f6g7gw5cm",
-    # ... remaining addresses ...
+    "bc1q8xr6agflnw9gkr38agzf78nzh4pr3f6g7gw5cm"
 ]
 
 # Google Sheets setup
@@ -160,15 +159,9 @@ def get_confirmations(txid: str) -> int:
 
 # — HANDLERS —
 async def start_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-            # Plain-text reply without MarkdownV2
-        reply_text = (
-            f"💰 Send {amount_btc:.8f} BTC to {address}
-"
-            f"(Bitstamp rate: ${price_usd:.2f}/BTC)
-"
-            "When sent, reply with your transaction ID."
-        )
-        await update.message.reply_text(reply_text)
+    await update.message.reply_text(
+        "Welcome! To start, send: /pay @your_username <amount_in_usd>"
+    )
 
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logging.info("▶️ pay_command called; ctx.args=%r", ctx.args)
@@ -201,13 +194,14 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             'jobs': {}
         }
 
-        # Plain-text reply without MarkdownV2
-        await update.message.reply_text(
-            f"💰 Send {amount_btc:.8f} BTC to {address}
+        reply_text = (
+    f"💰 Send {amount_btc:.8f} BTC to {address}
 "
-            f"(Bitstamp rate: ${price_usd:.2f}/BTC)\n"
-            "When sent, reply with your transaction ID."
-        )
+    f"(Bitstamp rate: ${price_usd:.2f}/BTC)
+"
+    "When sent, reply with your transaction ID."
+)
+await update.message.reply_text(reply_text)(reply_text)
 
     except Exception as e:
         logging.exception("Error in pay_command")
