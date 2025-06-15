@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 # — CONFIGURATION —
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_TOKEN_HERE"
+TELEGRAM_TOKEN = "7295095936:AAHfwxMhrghzd_t424LHG7QnUxtQAbdJyrg"
 
 # Predefined BTC addresses
 ADDRESSES = [
