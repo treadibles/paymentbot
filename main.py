@@ -302,7 +302,6 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending_payments.pop(chat_id, None)
 
 # — MAIN —
-```python
 def main():
     logging.basicConfig(level=logging.INFO)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -313,4 +312,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
