@@ -10,7 +10,7 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    filters,
 )
 
 # — CONFIGURATION —
@@ -23,10 +23,10 @@ ADDRESSES = [
     "bc1q3natm8yay26erppsfk3vjk4xamuadv9wzlgcvc",
 ]
 
-# Google Sheets setup
+# — GOOGLE SHEETS SETUP —
 SCOPE = [
     'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
+    'https://www.googleapis.com/auth/drive',
 ]
 CREDS = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', SCOPE)
 GC = gspread.authorize(CREDS)
@@ -49,17 +49,17 @@ def fetch_tx_details(txid: str) -> dict | None:
         if resp.status_code == 200:
             return resp.json()
     except requests.RequestException:
-        pass
+        logging.exception("Error fetching TX details")
     return None
 
 
 def get_confirmations(txid: str) -> int:
-    resp = requests.get(f"https://blockchain.info/q/txconfirmations/{txid}", timeout=10)
-    if resp.status_code == 200:
-        try:
-            return int(resp.text)
-        except ValueError:
-            return 0
+    try:
+        resp = requests.get(f"https://blockchain.info/q/txconfirmations/{txid}", timeout=10)
+        resp.raise_for_status()
+        return int(resp.text)
+    except Exception:
+        logging.exception("Error fetching confirmation count")
     return 0
 
 # — HANDLERS —
@@ -72,11 +72,15 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logging.info("▶️ pay_command called; ctx.args=%r", ctx.args)
     try:
         if len(ctx.args) != 2:
-            return await update.message.reply_text("Usage: /pay @your_username <amount_in_usd>")
+            return await update.message.reply_text(
+                "Usage: /pay @your_username <amount_in_usd>"
+            )
 
         username, amount_str = ctx.args
         if not username.startswith('@'):
-            return await update.message.reply_text("First argument must be your @username.")
+            return await update.message.reply_text(
+                "First argument must be your @username."
+            )
 
         usd_amount = float(amount_str)
         address = random.choice(ADDRESSES)
@@ -84,12 +88,17 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         price_usd = get_btc_price_bitstamp()
         amount_btc = usd_amount / price_usd
 
-        # Append to sheet
-        initial_row = [username, usd_amount, f"{amount_btc:.8f}", address, "", "", ""]
-        sheet.append_row(initial_row)
+        # Record session
+        sheet.append_row([
+            username,
+            usd_amount,
+            f"{amount_btc:.8f}",
+            address,
+            "",  # TXID placeholder
+            "",  # Order placeholder
+            ""   # Address placeholder
+        ])
         row_index = len(sheet.get_all_values())
-
-        # Save session
         chat_id = update.effective_chat.id
         pending_payments[chat_id] = {
             'username': username,
@@ -102,7 +111,7 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             'jobs': {}
         }
 
-        # Schedule existence check using context
+        # Schedule existence check with context
         job_exist = ctx.application.job_queue.run_repeating(
             callback=check_tx_existence,
             interval=30.0,
@@ -111,7 +120,7 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         pending_payments[chat_id]['jobs']['exist'] = job_exist
 
-        # Plain-text reply
+        # Initial reply
         reply_text = (
             f"💰 Send {amount_btc:.8f} BTC to {address}\n"
             f"(Bitstamp rate: ${price_usd:.2f}/BTC)\n"
@@ -121,7 +130,9 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.exception("Error in pay_command")
-        await update.message.reply_text(f"❌ Oops—something went wrong: {e}")
+        await update.message.reply_text(
+            f"❌ Oops—something went wrong: {e}"
+        )
 
 async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -130,7 +141,7 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text.strip()
-    # Step 1: TXID submission
+    # Step 1: receive TXID
     if data['txid'] is None:
         txid = text
         tx_details = fetch_tx_details(txid)
@@ -146,24 +157,20 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         data['txid'] = txid
         sheet.update_cell(data['row_index'], 5, txid)
-        await update.message.reply_text("🔍 TXID received. Monitoring on-chain…")
-
-        # Schedule confirmation check
-        job_conf = ctx.application.job_queue.run_repeating(
-            callback=check_tx_confirmation,
-            interval=60.0,
-            first=10.0,
-            context=chat_id
+        await update.message.reply_text(
+            "🔍 TXID received. Monitoring on-chain…"
         )
-        pending_payments[chat_id]['jobs']['conf'] = job_conf
         return
 
-    # Step 2: after confirmation
+    # Step 2: collect order after confirmation
     if data.get('awaiting_details'):
         order, addr = (text.split(';', 1) + [''])[:2]
         sheet.update_cell(data['row_index'], 6, order.strip())
         sheet.update_cell(data['row_index'], 7, addr.strip())
-        await update.message.reply_text("✅ Order and shipping info saved. Thank you!")
+        await update.message.reply_text(
+            "✅ Order and shipping info saved. Thank you!"
+        )
+        # cleanup
         pending_payments.pop(chat_id, None)
 
 # — BACKGROUND TASKS —
@@ -173,10 +180,14 @@ async def check_tx_existence(ctx: ContextTypes.DEFAULT_TYPE):
     if not data:
         return ctx.job.schedule_removal()
 
+    # Debug message each check
+    await ctx.bot.send_message(chat_id, "🔎 Checking for transaction on-chain...")
     if fetch_tx_details(data['txid']):
-        await ctx.bot.send_message(chat_id, "✅ Transaction detected! Waiting for 1 confirmation…")
+        await ctx.bot.send_message(
+            chat_id,
+            "✅ Transaction found! Starting confirmation checks..."
+        )
         ctx.job.schedule_removal()
-
         job_conf = ctx.application.job_queue.run_repeating(
             callback=check_tx_confirmation,
             interval=60.0,
@@ -191,7 +202,13 @@ async def check_tx_confirmation(ctx: ContextTypes.DEFAULT_TYPE):
     if not data:
         return ctx.job.schedule_removal()
 
-    if get_confirmations(data['txid']) >= 1:
+    # Get and report confirmation count
+    conf_count = get_confirmations(data['txid'])
+    await ctx.bot.send_message(
+        chat_id,
+        f"🔄 Checking confirmations... current count: {conf_count}"
+    )
+    if conf_count >= 1:
         await ctx.bot.send_message(
             chat_id,
             "🎉 Payment confirmed! Please reply with your order information and shipping address separated by a semicolon (;)."
