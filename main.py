@@ -5,13 +5,7 @@ import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # — CONFIGURATION —
 TELEGRAM_TOKEN = "7295095936:AAHfwxMhrghzd_t424LHG7QnUxtQAbdJyrg"
@@ -42,7 +36,6 @@ def get_btc_price_bitstamp() -> float:
     resp.raise_for_status()
     return float(resp.json()['last'])
 
-
 def fetch_tx_details(txid: str) -> dict | None:
     try:
         resp = requests.get(f"https://blockchain.info/rawtx/{txid}?format=json", timeout=10)
@@ -52,16 +45,6 @@ def fetch_tx_details(txid: str) -> dict | None:
         logging.exception("Error fetching TX details for %s", txid)
     return None
 
-
-def get_confirmations(txid: str) -> int:
-    try:
-        resp = requests.get(f"https://blockchain.info/q/txconfirmations/{txid}", timeout=10)
-        resp.raise_for_status()
-        return int(resp.text)
-    except Exception:
-        logging.exception("Error fetching confirmation count for %s", txid)
-    return 0
-
 # — HANDLERS —
 async def start_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -70,104 +53,111 @@ async def start_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logging.info("▶️ pay_command called; args=%r", ctx.args)
+    if len(ctx.args) != 2:
+        return await update.message.reply_text("Usage: /pay @your_username <amount_in_usd>")
+    username, amount_str = ctx.args
+    if not username.startswith('@'):
+        return await update.message.reply_text("First argument must be your @username.")
     try:
-        if len(ctx.args) != 2:
-            return await update.message.reply_text("Usage: /pay @your_username <amount_in_usd>")
-
-        username, amount_str = ctx.args
-        if not username.startswith('@'):
-            return await update.message.reply_text("First argument must be your @username.")
-
         usd_amount = float(amount_str)
-        address = random.choice(ADDRESSES)
-        price_usd = get_btc_price_bitstamp()
-        amount_btc = usd_amount / price_usd
+    except ValueError:
+        return await update.message.reply_text("Amount must be a number.")
 
-        # Record session
-        sheet.append_row([username, usd_amount, f"{amount_btc:.8f}", address, "", "", ""])
-        row_index = len(sheet.get_all_values())
-        chat_id = update.effective_chat.id
-        pending_payments[chat_id] = {
-            'username': username,
-            'fiat': usd_amount,
-            'address': address,
-            'amount_btc': amount_btc,
-            'txid': None,
-            'awaiting_details': False,
-            'row_index': row_index,
-            'jobs': {}
-        }
+    address = random.choice(ADDRESSES)
+    price_usd = get_btc_price_bitstamp()
+    amount_btc = usd_amount / price_usd
 
-        # Send payment info
-        reply_text = (
-            f"💰 Send {amount_btc:.8f} BTC to {address}\n"
-            f"(Bitstamp rate: ${price_usd:.2f}/BTC)\n"
-            "When sent, reply with your transaction ID."
-        )
-        await update.message.reply_text(reply_text)
+    # Record session in sheet
+    sheet.append_row([username, usd_amount, f"{amount_btc:.8f}", address, "", "", ""])
+    row_index = len(sheet.get_all_values())
+    chat_id = update.effective_chat.id
+    pending_payments[chat_id] = {
+        'username': username,
+        'fiat': usd_amount,
+        'address': address,
+        'amount_btc': amount_btc,
+        'txid': None,
+        'awaiting_details': False,
+        'row_index': row_index,
+        'jobs': {}
+    }
 
-    except Exception as e:
-        logging.exception("Error in pay_command")
-        await update.message.reply_text(f"❌ Oops—something went wrong: {e}")
+    # Send payment info
+    await update.message.reply_text(
+        f"💰 Send {amount_btc:.8f} BTC to {address}\n"
+        f"(Bitstamp rate: ${price_usd:.2f}/BTC)\n"
+        "When sent, reply with your transaction ID."
+    )
 
 async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     data = pending_payments.get(chat_id)
     if not data:
         return
-
     text = update.message.text.strip()
+
     # Step 1: receive TXID
     if data['txid'] is None:
         txid = text
         tx_details = fetch_tx_details(txid)
         if not tx_details:
-            return await update.message.reply_text("❌ TXID not found on-chain. Please check and try again.")
-        tx_time = tx_details.get('time')
-        if tx_time and (time.time() - tx_time) > 86400:
-            return await update.message.reply_text("❌ This transaction is older than 24 hours. Please provide a recent TXID.")
-
+            return await update.message.reply_text(
+                "❌ TXID not found on-chain. Please check and try again."
+            )
         data['txid'] = txid
         sheet.update_cell(data['row_index'], 5, txid)
         await update.message.reply_text("🔍 TXID received. Monitoring on-chain…")
 
-        # Schedule on-chain existence checks
+        # Schedule existence check
         async def exist_job(context):
             await context.bot.send_message(chat_id, "🔎 Checking for transaction on-chain...")
             if fetch_tx_details(data['txid']):
-                await context.bot.send_message(chat_id, "✅ Transaction found! Scheduling confirmation checks...")
-                # stop existence checks
+                await context.bot.send_message(
+                    chat_id,
+                    "✅ Transaction found! Scheduling confirmation checks..."
+                )
                 context.job.schedule_removal()
 
                 # Schedule confirmation checks
                 async def confirm_job(context):
                     await context.bot.send_message(chat_id, "Checked for confirmation")
-                    conf_count = get_confirmations(data['txid'])
-                    await context.bot.send_message(chat_id, f"🔄 Checking confirmations... current count: {conf_count}")
-                    if conf_count >= 1:
+                    txd = fetch_tx_details(data['txid'])
+                    if not txd:
                         await context.bot.send_message(
                             chat_id,
-                            "🎉 Payment confirmed! Please reply with your order info and shipping address separated by a semicolon (;)."
+                            "❌ Error fetching transaction details for confirmation."
+                        )
+                        return
+                    if txd.get('block_height'):
+                        await context.bot.send_message(
+                            chat_id,
+                            "🎉 Payment confirmed! Please reply with your order information and shipping address separated by a semicolon (;)."
                         )
                         context.job.schedule_removal()
                         data['awaiting_details'] = True
-
+                    else:
+                        await context.bot.send_message(
+                            chat_id,
+                            "⏳ Transaction not yet confirmed; will check again."
+                        )
                 job_conf = ctx.application.job_queue.run_repeating(
                     confirm_job, interval=60.0, first=10.0
                 )
-                pending_payments[chat_id]['jobs']['conf'] = job_conf
+                data['jobs']['conf'] = job_conf
 
         job_exist = ctx.application.job_queue.run_repeating(
             exist_job, interval=30.0, first=5.0
         )
-        pending_payments[chat_id]['jobs']['exist'] = job_exist
+        data['jobs']['exist'] = job_exist
         return
 
-    # Step 2: after confirmation, collect order info
+    # Step 2: collect order after confirmation
     if data.get('awaiting_details'):
-        order, addr = (text.split(';', 1) + [''])[:2]
-        sheet.update_cell(data['row_index'], 6, order.strip())
-        sheet.update_cell(data['row_index'], 7, addr.strip())
+        parts = text.split(';', 1)
+        order = parts[0].strip()
+        addr = parts[1].strip() if len(parts) > 1 else ''
+        sheet.update_cell(data['row_index'], 6, order)
+        sheet.update_cell(data['row_index'], 7, addr)
         await update.message.reply_text("✅ Order and shipping info saved. Thank you!")
         pending_payments.pop(chat_id, None)
 
@@ -175,11 +165,9 @@ async def text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     logging.basicConfig(level=logging.INFO)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("pay", pay_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
     app.run_polling()
 
 if __name__ == "__main__":
