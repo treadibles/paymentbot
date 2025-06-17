@@ -9,7 +9,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 # — CONFIGURATION —
 TELEGRAM_TOKEN = "7295095936:AAHfwxMhrghzd_t424LHG7QnUxtQAbdJyrg"
-# Predefined BTC addresses
+# Predefined BTC addresses (first 3 only for brevity)
 ADDRESSES = [
     "bc1q3natm8yay26erppsfk3vjk4xamuadv9wzlgcvc",
     "bc1qapagmrg4p0ata43wu8as733j59de23jttja3p7",
@@ -313,3 +313,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
